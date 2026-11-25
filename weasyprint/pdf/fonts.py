@@ -574,7 +574,14 @@ def _build_vector_font_dictionary(font_dictionary, pdf, font, widths, compress,
                                   reference, pdf_version):
     font_file = f'FontFile{3 if font.type == "otf" else 2}'
     max_x = max(widths.values()) if widths else 0
-    bbox = (0, font.descent, max_x, font.ascent)
+    if max_x > 0:
+        bbox = (0, font.descent, max_x, font.ascent)
+    else:
+        # A subset of only zero-advance glyphs (e.g. combining marks) would
+        # otherwise produce a zero-width box that some PDF readers reject.
+        # ISO 32000-2 §9.6.4 states that an all-zero FontBBox tells readers
+        # to make no assumptions about glyph sizes based on the bounding box.
+        bbox = (0, 0, 0, 0)
     flags = font.flags
     if len(widths) > 1 and len(set(font.widths.values())) == 1:
         flags += 2 ** (1 - 1)  # FixedPitch

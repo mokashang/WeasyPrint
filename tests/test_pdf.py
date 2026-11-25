@@ -781,6 +781,61 @@ def test_font_descent_ascent():
 
 
 @assert_no_logs
+def test_font_bbox_zero_advance_only():
+    # Regression test for #2979: a subset that only contains zero-advance
+    # glyphs (e.g. combining marks) must not emit a degenerate FontBBox
+    # like [0 descent 0 ascent]; some readers (such as Adobe Acrobat) reject
+    # it. Per ISO 32000-2 §9.6.4 an all-zero FontBBox tells readers to make
+    # no assumptions about glyph sizes.
+    import pydyf
+
+    from weasyprint import CSS
+    from weasyprint.pdf.fonts import Font, _build_vector_font_dictionary
+    from weasyprint.text.ffi import ffi, gobject, pango
+
+    font_config = FontConfiguration()
+    CSS(string='''
+      @font-face {
+        font-family: zero-advance;
+        src: url(weasyprint.otf);
+      }
+    ''', base_url=BASE_URL, font_config=font_config)
+    context = ffi.gc(
+        pango.pango_font_map_create_context(font_config.font_map),
+        gobject.g_object_unref)
+    description = ffi.gc(
+        pango.pango_font_description_new(),
+        pango.pango_font_description_free)
+    pango.pango_font_description_set_family(
+        description, ffi.new('char[]', b'zero-advance'))
+    pango.pango_font_description_set_absolute_size(description, 10 * 1024)
+    pango_font = ffi.gc(
+        pango.pango_font_map_load_font(
+            font_config.font_map, context, description),
+        gobject.g_object_unref)
+    font = Font(pango_font, description, 10)
+
+    def _font_bbox(widths):
+        pdf = pydyf.PDF()
+        placeholder = pydyf.Dictionary({})
+        pdf.add_object(placeholder)
+        font_dictionary = pydyf.Dictionary({'Type': '/Font'})
+        _build_vector_font_dictionary(
+            font_dictionary, pdf, font, widths, compress=False,
+            reference=placeholder.reference, pdf_version='1.7')
+        for obj in pdf.objects:
+            if (isinstance(obj, pydyf.Dictionary)
+                    and obj.get('Type') == '/FontDescriptor'):
+                return tuple(obj['FontBBox'])
+        raise AssertionError('No FontDescriptor emitted')
+
+    assert _font_bbox({1: 0, 2: 0}) == (0, 0, 0, 0)
+    # A non-zero advance still produces the usual box.
+    bbox = _font_bbox({1: 500, 2: 300})
+    assert bbox == (0, font.descent, 500, font.ascent)
+
+
+@assert_no_logs
 def test_font_unicode_range():
     pdf = FakeHTML(string='''<html><head><style>
         @font-face {
